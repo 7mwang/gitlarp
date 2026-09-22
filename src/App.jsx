@@ -40,7 +40,7 @@ function parseRepo(value) {
   return match ? `${match[1]}/${match[2]}` : null
 }
 
-async function githubJson(url, signal, token) {
+async function githubJson(url, signal, token, includeLink = false) {
   const response = await fetch(url, {
     signal,
     headers: {
@@ -66,13 +66,31 @@ async function githubJson(url, signal, token) {
     }
     throw new Error(`GitHub could not load this repository (${response.status}).`)
   }
-  return response.json()
+  const data = await response.json()
+  return includeLink ? { data, next: response.headers.get('link')?.match(/<([^>]+)>; rel="next"/)?.[1] || null } : data
 }
 
-async function loadRepo(repo, signal, token) {
-  const base = `https://api.github.com/repos/${repo}`
-  const commits = await githubJson(`${base}/commits?per_page=18`, signal, token)
-  const listed = commits.map((commit) => ({
+function groupCommits(commits, repo) {
+  const groups = new Map()
+  commits.forEach((commit) => {
+    const date = dateKey(commit.date)
+    if (!groups.has(date)) groups.set(date, { id: date, date, commits: [], additions: 0, deletions: 0, repo })
+    const group = groups.get(date)
+    group.commits.push(commit)
+    if (group.additions !== null && commit.additions !== null) group.additions += commit.additions
+    else group.additions = null
+    if (group.deletions !== null && commit.deletions !== null) group.deletions += commit.deletions
+    else group.deletions = null
+  })
+  return [...groups.values()].sort((a, b) => b.date.localeCompare(a.date))
+}
+
+async function loadRepoPage(repo, signal, token, next) {
+  const since = new Date(`${dayBefore(83)}T00:00:00`).toISOString()
+  const url = next || `https://api.github.com/repos/${repo}/commits?per_page=100&since=${encodeURIComponent(since)}`
+  if (next && new URL(next).origin !== 'https://api.github.com') throw new Error('GitHub returned an invalid history page.')
+  const result = await githubJson(url, signal, token, true)
+  const listed = result.data.map((commit) => ({
       sha: commit.sha,
       date: commit.commit.author?.date || commit.commit.committer?.date,
       message: commit.commit.message.split('\n')[0],
@@ -81,23 +99,8 @@ async function loadRepo(repo, signal, token) {
       avatar: commit.author?.avatar_url || commit.committer?.avatar_url || null,
       additions: null,
       deletions: null
-    }))
-  const detailed = token ? await Promise.all(listed.map(async (commit) => {
-    const detail = await githubJson(`${base}/commits/${commit.sha}`, signal, token)
-    return { ...commit, additions: detail.stats?.additions ?? null, deletions: detail.stats?.deletions ?? null }
-  })) : listed
-  const groups = new Map()
-  detailed.forEach((commit) => {
-    const date = dateKey(commit.date)
-    if (!groups.has(date)) groups.set(date, { id: date, date, commits: [], additions: token ? 0 : null, deletions: token ? 0 : null, repo })
-    const group = groups.get(date)
-    group.commits.push(commit)
-    if (group.additions !== null && commit.additions !== null) group.additions += commit.additions
-    else group.additions = null
-    if (group.deletions !== null && commit.deletions !== null) group.deletions += commit.deletions
-    else group.deletions = null
-  })
-  return { days: [...groups.values()].sort((a, b) => b.date.localeCompare(a.date)) }
+    })).filter(commit => commit.date && dateKey(commit.date) >= dayBefore(83) && dateKey(commit.date) <= dayBefore(0))
+  return { days: groupCommits(listed, repo), next: result.next }
 }
 
 function formattedDate(date, options = { month: 'long', day: 'numeric' }) {
@@ -132,6 +135,16 @@ function keepCachedLineCounts(days, cached) {
   })
 }
 
+function filterDaysByAuthor(days, author) {
+  if (author === 'all') return days
+  return days.flatMap(day => {
+    const commits = day.commits.filter(commit => commit.author === author)
+    if (!commits.length) return []
+    const complete = commits.every(commit => commit.additions !== null && commit.deletions !== null)
+    return [{ ...day, commits, additions: complete ? commits.reduce((sum, commit) => sum + commit.additions, 0) : null, deletions: complete ? commits.reduce((sum, commit) => sum + commit.deletions, 0) : null }]
+  })
+}
+
 function ProfileAvatar({ name, src, className = '' }) {
   const [failed, setFailed] = useState(false)
   return src && !failed
@@ -139,7 +152,7 @@ function ProfileAvatar({ name, src, className = '' }) {
     : <span className={`profile-avatar avatar-fallback ${className}`} title={name} aria-label={name}><UserCircle size="75%" weight="fill" /></span>
 }
 
-function Heatmap({ days }) {
+function Heatmap({ days, complete, sample, next, onLoadMore, loadingMore, loadError }) {
   const scrollRef = useRef(null)
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth }, [days])
   const values = new Map(days.map(day => [day.date, day.commits.length]))
@@ -152,16 +165,18 @@ function Heatmap({ days }) {
   const total = cells.reduce((sum, cell) => sum + cell.count, 0)
   return <section className="activity-panel" aria-labelledby="activity-heading">
     <div className="section-top activity-top">
-      <div><h2 id="activity-heading">Activity</h2><p>Commits by day, across the last 12 weeks.</p></div>
-      <div className="activity-total"><span className="pulse-dot" /> {total} commits <span>in the last 12 weeks</span></div>
+      <div><h2 id="activity-heading">Activity</h2><p>{sample ? 'Sample commits by day.' : complete ? 'Default-branch commits in the last 12 weeks.' : 'Default-branch commits loaded from the last 12 weeks.'}</p></div>
+      <div className="activity-total"><span className="pulse-dot" /> {total} commit{total === 1 ? '' : 's'} <span>{sample ? 'in the sample' : complete ? 'in the last 12 weeks' : 'loaded so far'}</span></div>
     </div>
     <div className="heatmap-scroll" ref={scrollRef}><div className="heatmap-wrap">
       <div className="week-labels"><span>Mon</span><span>Wed</span><span>Fri</span></div>
-      <div className="heatmap" role="img" aria-label={`${total} commits shown across the last 12 weeks`}>
+      <div className="heatmap" role="img" aria-label={`${total} default-branch commits ${complete ? 'in' : 'loaded from'} the last 12 weeks`}>
         {cells.map(cell => <span key={cell.key} className={`heat-cell level-${Math.min(cell.count, 4)}`} title={`${formattedDate(cell.key)}: ${cell.count} commit${cell.count === 1 ? '' : 's'}`} />)}
       </div>
     </div></div>
     <div className="heatmap-footer"><span>12 weeks ago</span><span>Today</span><span className="legend">Less <i className="level-0" /><i className="level-1" /><i className="level-2" /><i className="level-3" /><i className="level-4" /> More</span></div>
+    {next && <div className="history-control"><span>Showing {total} commit{total === 1 ? '' : 's'}. Older days may be missing.</span><button type="button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load up to 100 more'} <ArrowRight size={14} /></button></div>}
+    {loadError && <p className="history-error" role="alert">{loadError}</p>}
   </section>
 }
 
@@ -250,22 +265,31 @@ export default function App() {
   const [showConnect, setShowConnect] = useState(false)
   const [shareDay, setShareDay] = useState(null)
   const [filter, setFilter] = useState('all')
+  const [authorFilter, setAuthorFilter] = useState('all')
+  const [nextPage, setNextPage] = useState(null)
+  const [historyComplete, setHistoryComplete] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [historyError, setHistoryError] = useState('')
   const [token, setToken] = useState('')
   const [tokenInput, setTokenInput] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [lineLoading, setLineLoading] = useState({})
   const [lineErrors, setLineErrors] = useState({})
   const currentRepoRef = useRef(repo)
+  const loadGenerationRef = useRef(0)
   currentRepoRef.current = repo
   const isDemo = repo === DEMO_REPO
 
   useEffect(() => {
-    if (repo === DEMO_REPO) { setDays(demoDays); setInfo(null); setLoading(false); return }
+    loadGenerationRef.current += 1
+    if (repo === DEMO_REPO) { setDays(demoDays); setInfo(null); setNextPage(null); setHistoryComplete(false); setLoading(false); return }
     const controller = new AbortController()
-    setLoading(true); setError(''); setNotice('')
-    loadRepo(repo, controller.signal, token).then(result => {
+    setLoading(true); setDays([]); setError(''); setNotice(''); setNextPage(null); setHistoryComplete(false); setLoadingMore(false); setHistoryError(''); setAuthorFilter('all')
+    loadRepoPage(repo, controller.signal, token).then(result => {
       const daysWithCache = keepCachedLineCounts(result.days, readStorage(`${CACHE_PREFIX}${repo}`, null))
       setDays(daysWithCache)
+      setNextPage(result.next)
+      setHistoryComplete(!result.next)
       setInfo({ name: repo.split('/')[1] })
       try { localStorage.setItem(`${CACHE_PREFIX}${repo}`, JSON.stringify({ days: daysWithCache, savedAt: Date.now() })) } catch { /* Cache is optional. */ }
     }).catch(err => {
@@ -288,11 +312,13 @@ export default function App() {
     if (showConnect) { setRepoInput(isDemo ? '' : repo); setTokenInput(''); setConnectError('') }
   }, [showConnect])
 
-  const totalCommits = days.reduce((sum, day) => sum + day.commits.length, 0)
-  const measuredDays = days.filter(day => day.additions !== null && day.deletions !== null)
+  const contributors = [...new Set(days.flatMap(day => day.commits.map(commit => commit.author)))].sort((a, b) => a.localeCompare(b))
+  const filteredDays = filterDaysByAuthor(days, authorFilter)
+  const totalCommits = filteredDays.reduce((sum, day) => sum + day.commits.length, 0)
+  const measuredDays = filteredDays.filter(day => day.additions !== null && day.deletions !== null)
   const totalLines = measuredDays.length ? measuredDays.reduce((sum, day) => sum + day.additions + day.deletions, 0) : null
-  const activeDays = days.length
-  const visibleDays = filter === 'notes' ? days.filter(day => entries[`${repo}:${day.date}`]?.note || entries[`${repo}:${day.date}`]?.image) : days
+  const activeDays = filteredDays.length
+  const visibleDays = filter === 'notes' ? filteredDays.filter(day => entries[`${repo}:${day.date}`]?.note || entries[`${repo}:${day.date}`]?.image) : filteredDays
   const displayName = isDemo ? 'The work adds up.' : info?.name || repo.split('/')[1]
   const subtitle = isDemo ? 'A sample log of commits, changes, and days spent building.' : `Recent activity from ${repo}. Grouped by work day.`
   const saveEntry = (date, value) => {
@@ -300,21 +326,42 @@ export default function App() {
     try { localStorage.setItem(STORAGE_ENTRIES, JSON.stringify(next)); setEntries(next) }
     catch { alert('Your browser storage is full. Try a smaller image. Your latest change was not saved.') }
   }
+  const loadMore = async () => {
+    if (!nextPage || loadingMore) return
+    const requestRepo = repo
+    const requestPage = nextPage
+    const requestGeneration = loadGenerationRef.current
+    setLoadingMore(true); setHistoryError('')
+    try {
+      const result = await loadRepoPage(requestRepo, undefined, token, requestPage)
+      if (currentRepoRef.current !== requestRepo || loadGenerationRef.current !== requestGeneration) return
+      const currentCommits = days.flatMap(day => day.commits)
+      const merged = [...new Map([...currentCommits, ...result.days.flatMap(day => day.commits)].map(commit => [commit.sha, commit])).values()]
+      const updated = keepCachedLineCounts(groupCommits(merged, requestRepo), readStorage(`${CACHE_PREFIX}${requestRepo}`, null))
+      setDays(updated)
+      setNextPage(result.next)
+      setHistoryComplete(!result.next)
+      try { localStorage.setItem(`${CACHE_PREFIX}${requestRepo}`, JSON.stringify({ days: updated, savedAt: Date.now() })) } catch { /* Cache is optional. */ }
+    } catch (cause) {
+      if (currentRepoRef.current === requestRepo && loadGenerationRef.current === requestGeneration) setHistoryError(cause.message)
+    } finally {
+      if (currentRepoRef.current === requestRepo && loadGenerationRef.current === requestGeneration) setLoadingMore(false)
+    }
+  }
   const loadDayLines = async (day) => {
     if (lineLoading[day.date]) return
     const requestRepo = repo
     const enriched = day.commits.map(commit => ({ ...commit }))
     const saveProgress = () => {
-      const complete = enriched.every(commit => commit.additions !== null && commit.deletions !== null)
-      const updatedDay = {
-        ...day,
-        commits: enriched.map(commit => ({ ...commit })),
-        additions: complete ? enriched.reduce((sum, commit) => sum + commit.additions, 0) : null,
-        deletions: complete ? enriched.reduce((sum, commit) => sum + commit.deletions, 0) : null
-      }
       setDays(current => {
         if (!current.some(item => item.repo === requestRepo)) return current
-        const updated = current.map(item => item.date === day.date ? updatedDay : item)
+        const measured = new Map(enriched.map(commit => [commit.sha, commit]))
+        const updated = current.map(item => {
+          if (item.date !== day.date) return item
+          const commits = item.commits.map(commit => measured.get(commit.sha) || commit)
+          const complete = commits.every(commit => commit.additions !== null && commit.deletions !== null)
+          return { ...item, commits, additions: complete ? commits.reduce((sum, commit) => sum + commit.additions, 0) : null, deletions: complete ? commits.reduce((sum, commit) => sum + commit.deletions, 0) : null }
+        })
         try { localStorage.setItem(`${CACHE_PREFIX}${requestRepo}`, JSON.stringify({ days: updated, savedAt: Date.now() })) } catch { /* Cache is optional. */ }
         return updated
       })
@@ -362,12 +409,13 @@ export default function App() {
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button></div>}
         {notice && <div className="demo-banner" role="status"><span>{notice}</span><button onClick={() => setShowConnect(true)}>{token ? 'Change token' : 'Add token'} <ArrowRight size={15} /></button></div>}
         <section className="welcome"><div><div className="welcome-date">WORK LOG <span>/</span> {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div><h1>{displayName}</h1><p>{subtitle}</p></div><button className="primary-button" onClick={() => setShowConnect(true)}><GithubLogo size={18} weight="fill" /> {isDemo ? 'Add a repository' : 'Switch repository'} <ArrowRight size={16} /></button></section>
-        <section className="stats-grid" aria-label="Progress summary"><div className="stat-card"><span>COMMITS</span><strong>{loading || error ? '—' : totalCommits.toLocaleString()}</strong><small>Latest activity</small></div><div className="stat-card"><span>LINES CHANGED</span><strong>{loading || error || totalLines === null ? '—' : totalLines.toLocaleString()}</strong><small>{measuredDays.length === days.length && days.length ? 'Additions + deletions' : measuredDays.length ? `${measuredDays.length} of ${days.length} days measured` : 'Load counts in the log'}</small></div><div className="stat-card"><span>ACTIVE DAYS</span><strong>{loading || error ? '—' : activeDays}</strong><small>In this {isDemo ? 'sample' : 'commit window'}</small></div></section>
-        <Heatmap days={days} />
+        {!isDemo && <div className="contributor-filter"><label htmlFor="contributor-select">CONTRIBUTOR</label><select id="contributor-select" value={authorFilter} onChange={event => setAuthorFilter(event.target.value)}><option value="all">All contributors</option>{contributors.map(author => <option key={author} value={author}>{author}</option>)}</select><span>{authorFilter === 'all' ? 'Repository activity' : `Showing commits by ${authorFilter}`}</span></div>}
+        <section className="stats-grid" aria-label="Progress summary"><div className="stat-card"><span>COMMITS</span><strong>{loading || error ? '—' : totalCommits.toLocaleString()}</strong><small>{isDemo ? 'Sample activity' : historyComplete ? 'Last 12 weeks' : 'Loaded so far'}</small></div><div className="stat-card"><span>LINES CHANGED</span><strong>{loading || error || totalLines === null ? '—' : totalLines.toLocaleString()}</strong><small>{measuredDays.length === filteredDays.length && filteredDays.length ? 'Additions + deletions' : measuredDays.length ? `${measuredDays.length} of ${filteredDays.length} days measured` : 'Load counts in the log'}</small></div><div className="stat-card"><span>ACTIVE DAYS</span><strong>{loading || error ? '—' : activeDays}</strong><small>{isDemo ? 'In this sample' : historyComplete ? 'In the last 12 weeks' : 'In loaded commits'}</small></div></section>
+        <Heatmap days={filteredDays} complete={historyComplete} sample={isDemo} next={nextPage} onLoadMore={loadMore} loadingMore={loadingMore} loadError={historyError} />
         <section id="journal" className="journal"><div className="section-top journal-top"><div><h2>Work log</h2><p>Open a day to add context or make a card.</p></div><div className="filter-tabs" role="group" aria-label="Filter work log"><button className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>All days</button><button className={filter === 'notes' ? 'selected' : ''} onClick={() => setFilter('notes')}>With notes</button></div></div>
-          {loading ? <div className="state-message"><SpinnerGap className="spinner" size={28} /><h3>Loading your work</h3><p>Fetching recent commits from GitHub.</p></div>
+          {loading ? <div className="state-message"><SpinnerGap className="spinner" size={28} /><h3>Loading activity</h3><p>Fetching commits from GitHub.</p></div>
           : visibleDays.length ? <div className="entry-list">{visibleDays.map(day => <EntryCard key={day.id} day={day} entry={entries[`${repo}:${day.date}`]} onSave={value => saveEntry(day.date, value)} onShare={() => setShareDay(day)} onLoadLines={() => loadDayLines(day)} lineLoading={!!lineLoading[day.date]} lineError={lineErrors[day.date]} isDemo={isDemo} />)}</div>
-          : <div className="state-message"><ImageIcon size={30} /><h3>{error ? 'Activity could not load' : filter === 'notes' ? 'No field notes yet' : 'No recent commits found'}</h3><p>{error ? 'Try again after the limit resets or connect with a valid token.' : filter === 'notes' ? 'Add a note or photo to a work day to see it here.' : 'Try a repository with recent activity.'}</p>{error ? <button className="small-primary" onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button> : filter === 'notes' && <button className="small-primary" onClick={() => setFilter('all')}>See all activity</button>}</div>}
+          : <div className="state-message"><ImageIcon size={30} /><h3>{error ? 'Activity could not load' : filter === 'notes' ? 'No work days with notes' : authorFilter !== 'all' ? 'No commits by this contributor' : 'No commits in this window'}</h3><p>{error ? 'Try again after the limit resets or connect with a valid token.' : filter === 'notes' ? 'Add a note or photo to a work day to see it here.' : authorFilter !== 'all' ? 'Choose another contributor or load more history.' : 'Try a repository with activity in the last 12 weeks.'}</p>{error ? <button className="small-primary" onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button> : filter === 'notes' ? <button className="small-primary" onClick={() => setFilter('all')}>See all activity</button> : authorFilter !== 'all' && <button className="small-primary" onClick={() => setAuthorFilter('all')}>All contributors</button>}</div>}
         </section>
         <footer>GitLarp · GitHub activity by work day. {isDemo && <button onClick={resetDemo}>Reset demo</button>}</footer>
       </div>
@@ -377,7 +425,7 @@ export default function App() {
         <button className="dialog-close" aria-label="Close" onClick={closeConnect}><X size={20} /></button>
         <div className="dialog-icon"><GithubLogo size={27} weight="fill" /></div>
         <h2 id="connect-title">Connect a repository</h2>
-        <p>Load the latest 18 commits from a public GitHub repository.</p>
+        <p>Load commits from the last 12 weeks of a public GitHub repository.</p>
         <form onSubmit={connect}>
           <label htmlFor="repo-input">Repository URL or owner/repo</label>
           <div className="input-wrap"><MagnifyingGlass size={19} /><input id="repo-input" autoFocus value={repoInput} onChange={e => { setRepoInput(e.target.value); setConnectError('') }} placeholder="e.g. facebook/react" aria-invalid={!!connectError} aria-describedby={connectError ? 'connect-error' : undefined} /></div>
@@ -385,7 +433,7 @@ export default function App() {
           <label className="token-label" htmlFor="token-input">Your GitHub token <span>optional</span></label>
           {token && <div className="token-status" role="status"><Check size={15} weight="bold" /> Token active for this tab <button type="button" onClick={forgetToken}>Forget token</button></div>}
           <input className="token-input" id="token-input" type="password" autoComplete="off" autoCapitalize="off" spellCheck="false" value={tokenInput} onChange={event => setTokenInput(event.target.value)} placeholder={token ? 'Paste a new token to replace it' : 'Paste a fine-grained token'} />
-          <p className="token-help">{token ? 'Leave blank to keep the current token. ' : ''}Choose a fine-grained token for one repository with <strong>Contents: read-only</strong> and a short expiry. GitLarp sends it directly to GitHub. It stays in this tab's memory and clears on refresh; it is never saved in cookies or localStorage. <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create your token <ArrowSquareOut size={11} /></a></p>
+          <p className="token-help">{token ? 'Leave blank to keep the current token. ' : ''}Choose a fine-grained token for one repository with <strong>Contents: read-only</strong> and a short expiry. A token gives you more API requests; line counts still load when you ask for them. GitLarp sends it directly to GitHub. It stays in this tab's memory and clears on refresh; it is never saved in cookies or localStorage. <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create your token <ArrowSquareOut size={11} /></a></p>
           <button className="primary-button" type="submit">Load activity <ArrowRight size={17} /></button>
         </form>
         <div className="dialog-foot">Public repositories only · Notes and photos stay in this browser</div>
