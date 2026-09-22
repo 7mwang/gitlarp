@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+.agents/
+.codex/
+.env
+.env.*
+!.env.example
+.npmrc
+.pypirc
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
