@@ -37,12 +37,14 @@ GitHub activity supplies the facts. A note or photo supplies context that commit
 ## Capabilities and Constraints
 
 - A repository may be entered as `owner/repo` or as a GitHub repository URL. Only public repositories are supported.
-- Public mode makes one GitHub REST API request for the latest 18 commits. Exact line counts require one detail request per unmeasured commit. A token is optional, stays in page memory, and is sent directly to GitHub. Do not persist tokens.
+- Public mode makes one GitHub REST API request for the latest 18 commits. Exact line counts require one detail request per unmeasured commit. Each visitor may supply their own optional, fine-grained token with `Contents: read-only`. It stays in page memory, is sent directly to GitHub, and can be forgotten from the connection dialog. Never persist a token in cookies, `localStorage`, a URL, or the repository.
 - Commits are grouped by the user's local calendar day. The 12-week graph displays commits in the fetched window; it is not a complete 12-week repository history.
 - Notes and photos live in this browser's `localStorage`, keyed by repository and date. Uploads are limited to 2 MB. Repository activity and measured line counts are also cached locally for rate-limit fallback.
 - GitHub avatars depend on authors having linked GitHub accounts. The generic profile icon is the fallback for missing or failed images.
 - The card is rendered in `src/shareCard.js` at 1080 × 1350. A user's uploaded image always replaces the daily photo. The daily photos are bundled in the app so card creation does not depend on a wallpaper service. The same canvas serves the preview and downloaded PNG.
 - The account, sync, and privacy model beyond local browser storage has not been decided.
+
+GitHub Pages needs a build with `/gitlarp/` as the Vite base path (`npm run build:pages`). Pages can serve the current static app but cannot provide an HttpOnly session cookie or a server-side GitHub OAuth exchange. Do not call the memory-only token flow equivalent to server-managed sign-in. If GitLarp needs one-click GitHub authorization later, use a GitHub App with a backend and a secure session design. Do not add a shared owner token to the client bundle.
 
 ## Brand Commitments
 

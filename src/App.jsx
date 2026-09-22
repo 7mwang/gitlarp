@@ -51,7 +51,7 @@ async function githubJson(url, signal, token) {
   })
   if (!response.ok) {
     if (response.status === 404) throw new Error('Repository not found. Check the name and make sure it is public.')
-    if (response.status === 401) throw new Error('GitHub rejected that token. Check it and try again.')
+    if (response.status === 401) throw new Error('GitHub rejected your token. Check it and try again.')
     if (response.status === 403 || response.status === 429) {
       const exhausted = response.headers.get('x-ratelimit-remaining') === '0'
       const reset = Number(response.headers.get('x-ratelimit-reset'))
@@ -59,7 +59,7 @@ async function githubJson(url, signal, token) {
         ? ` The limit resets at ${new Date(reset * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
         : ''
       const error = new Error(exhausted
-        ? `GitHub's ${token ? 'authenticated' : 'public'} API limit is exhausted.${resetText} ${token ? 'Try again after the reset or use another token.' : 'Add a valid token in Connect a repository to load now.'}`
+        ? `GitHub's ${token ? 'authenticated' : 'public'} API limit is exhausted.${resetText} ${token ? 'Try again after the reset or use another token.' : 'Add your own token in Connect a repository to load now.'}`
         : `GitHub blocked the request (${response.status}). Check the repository and token, then try again.`)
       error.rateLimited = exhausted
       throw error
@@ -285,7 +285,7 @@ export default function App() {
   }, [repo, token, refreshKey])
 
   useEffect(() => {
-    if (showConnect) { setRepoInput(isDemo ? '' : repo); setTokenInput(token); setConnectError('') }
+    if (showConnect) { setRepoInput(isDemo ? '' : repo); setTokenInput(''); setConnectError('') }
   }, [showConnect])
 
   const totalCommits = days.reduce((sum, day) => sum + day.commits.length, 0)
@@ -342,9 +342,11 @@ export default function App() {
     const parsed = parseRepo(repoInput)
     if (!parsed) { setConnectError('Enter a repository as owner/repo or paste its GitHub URL.'); return }
     localStorage.setItem(STORAGE_REPO, JSON.stringify(parsed))
-    setToken(tokenInput.trim()); setRepo(parsed); setRefreshKey(value => value + 1); setLineLoading({}); setLineErrors({}); setShowConnect(false); setRepoInput(''); setFilter('all'); setError(''); setNotice(''); setConnectError('')
+    setToken(tokenInput.trim() || token); setRepo(parsed); setRefreshKey(value => value + 1); setLineLoading({}); setLineErrors({}); setShowConnect(false); setTokenInput(''); setRepoInput(''); setFilter('all'); setError(''); setNotice(''); setConnectError('')
   }
-  const resetDemo = () => { localStorage.setItem(STORAGE_REPO, JSON.stringify(DEMO_REPO)); setRepo(DEMO_REPO); setShowConnect(false); setError(''); setNotice('') }
+  const closeConnect = () => { setTokenInput(''); setShowConnect(false) }
+  const forgetToken = () => { setToken(''); setTokenInput('') }
+  const resetDemo = () => { localStorage.setItem(STORAGE_REPO, JSON.stringify(DEMO_REPO)); setRepo(DEMO_REPO); setToken(''); setTokenInput(''); setShowConnect(false); setError(''); setNotice('') }
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -354,7 +356,7 @@ export default function App() {
     </aside>
 
     <main id="overview" className="main-content">
-      <header className="topbar"><div className="mobile-brand"><GitBranch size={21} weight="bold" /> gitlarp<span>.</span></div><div className="breadcrumb">Workspace <span>/</span> Overview</div><div className="topbar-right"><span className="live-indicator"><span /> {isDemo ? 'DEMO VIEW' : 'LIVE FROM GITHUB'}</span><button className="avatar" aria-label="Connect a repository" onClick={() => setShowConnect(true)}>{isDemo ? 'GL' : repo.slice(0, 2).toUpperCase()}</button></div></header>
+      <header className="topbar"><div className="mobile-brand"><GitBranch size={21} weight="bold" /> gitlarp<span>.</span></div><div className="breadcrumb">Workspace <span>/</span> Overview</div><div className="topbar-right"><span className="live-indicator"><span /> {isDemo ? 'DEMO VIEW' : token ? 'YOUR TOKEN · THIS TAB' : 'PUBLIC GITHUB API'}</span><button className="avatar" aria-label="Connect a repository" onClick={() => setShowConnect(true)}>{isDemo ? 'GL' : repo.slice(0, 2).toUpperCase()}</button></div></header>
       <div className="content-wrap">
         {isDemo && <div className="demo-banner"><Lightning size={18} weight="fill" /><span>Sample activity. Add a public repository to see your own work.</span></div>}
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button></div>}
@@ -370,9 +372,9 @@ export default function App() {
         <footer>GitLarp · GitHub activity by work day. {isDemo && <button onClick={resetDemo}>Reset demo</button>}</footer>
       </div>
     </main>
-    {showConnect && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowConnect(false) }}>
+    {showConnect && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeConnect() }}>
       <div className="connect-dialog" role="dialog" aria-modal="true" aria-labelledby="connect-title">
-        <button className="dialog-close" aria-label="Close" onClick={() => setShowConnect(false)}><X size={20} /></button>
+        <button className="dialog-close" aria-label="Close" onClick={closeConnect}><X size={20} /></button>
         <div className="dialog-icon"><GithubLogo size={27} weight="fill" /></div>
         <h2 id="connect-title">Connect a repository</h2>
         <p>Load the latest 18 commits from a public GitHub repository.</p>
@@ -380,9 +382,10 @@ export default function App() {
           <label htmlFor="repo-input">Repository URL or owner/repo</label>
           <div className="input-wrap"><MagnifyingGlass size={19} /><input id="repo-input" autoFocus value={repoInput} onChange={e => { setRepoInput(e.target.value); setConnectError('') }} placeholder="e.g. facebook/react" aria-invalid={!!connectError} aria-describedby={connectError ? 'connect-error' : undefined} /></div>
           {connectError && <p className="form-error" id="connect-error" role="alert">{connectError}</p>}
-          <label className="token-label" htmlFor="token-input">GitHub token <span>optional</span></label>
-          <input className="token-input" id="token-input" type="password" autoComplete="off" value={tokenInput} onChange={event => setTokenInput(event.target.value)} placeholder="Paste a token to avoid the public API limit" />
-          <p className="token-help">Without a token, GitLarp lists commits in one request. Load line counts on any work card, or add a token to fetch all counts upfront. The token stays only in this open page. <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a token on GitHub <ArrowSquareOut size={11} /></a></p>
+          <label className="token-label" htmlFor="token-input">Your GitHub token <span>optional</span></label>
+          {token && <div className="token-status" role="status"><Check size={15} weight="bold" /> Token active for this tab <button type="button" onClick={forgetToken}>Forget token</button></div>}
+          <input className="token-input" id="token-input" type="password" autoComplete="off" autoCapitalize="off" spellCheck="false" value={tokenInput} onChange={event => setTokenInput(event.target.value)} placeholder={token ? 'Paste a new token to replace it' : 'Paste a fine-grained token'} />
+          <p className="token-help">{token ? 'Leave blank to keep the current token. ' : ''}Choose a fine-grained token for one repository with <strong>Contents: read-only</strong> and a short expiry. GitLarp sends it directly to GitHub. It stays in this tab's memory and clears on refresh; it is never saved in cookies or localStorage. <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create your token <ArrowSquareOut size={11} /></a></p>
           <button className="primary-button" type="submit">Load activity <ArrowRight size={17} /></button>
         </form>
         <div className="dialog-foot">Public repositories only · Notes and photos stay in this browser</div>
