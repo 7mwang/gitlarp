@@ -6,6 +6,7 @@ import {
   Plus, ShareNetwork, SpinnerGap, UserCircle, X
 } from '@phosphor-icons/react'
 import { downloadShareCard, drawShareCard } from './shareCard.js'
+import { buildCardData } from './cardData.js'
 
 const STORAGE_REPO = 'gitlarp-repo'
 const STORAGE_ENTRIES = 'gitlarp-entries'
@@ -180,36 +181,96 @@ function Heatmap({ days, complete, sample, next, onLoadMore, loadingMore, loadEr
   </section>
 }
 
-function ShareCardDialog({ day, entry, onClose }) {
+const CARD_ACCENTS = [
+  { name: 'Rust', color: '#a34b32' },
+  { name: 'Pine', color: '#496c53' },
+  { name: 'Blue', color: '#426b86' }
+]
+
+function ShareCardDialog({ availableDays, entries, repo, initialDates, onClose }) {
   const canvasRef = useRef(null)
-  const closeRef = useRef(null)
+  const titleRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const [selectedDates, setSelectedDates] = useState(initialDates)
+  const [title, setTitle] = useState(() => initialDates.length === 1 ? getTitle(availableDays.find(day => day.date === initialDates[0])) : `${initialDates.length} work days`)
+  const [titleEdited, setTitleEdited] = useState(false)
+  const [coverMode, setCoverMode] = useState('auto')
+  const [customImage, setCustomImage] = useState(null)
+  const [accent, setAccent] = useState(CARD_ACCENTS[0].color)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
+  const [background, setBackground] = useState(null)
+  const [photoError, setPhotoError] = useState('')
+  const chosenDays = availableDays.filter(day => selectedDates.includes(day.date))
+  const savedPhotoDay = chosenDays.find(day => entries[`${repo}:${day.date}`]?.image)
+  const effectiveCover = coverMode === 'auto' ? savedPhotoDay ? 'saved' : 'daily' : coverMode
+  const selectedCount = chosenDays.reduce((sum, day) => sum + day.commits.length, 0)
+
+  useEffect(() => {
+    titleRef.current?.focus()
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKeyDown = (event) => { if (event.key === 'Escape') onCloseRef.current() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown); document.body.style.overflow = previousOverflow }
+  }, [])
 
   useEffect(() => {
     let active = true
-    closeRef.current?.focus()
-    const onKeyDown = (event) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKeyDown)
-    drawShareCard(canvasRef.current, day, entry).then(() => {
-      if (active) setReady(true)
-    }).catch((cause) => { if (active) setError(cause.message) })
-    return () => { active = false; window.removeEventListener('keydown', onKeyDown) }
-  }, [day, entry, onClose])
+    setReady(false); setError(''); setBackground(null)
+    if (!chosenDays.length || !title.trim() || (effectiveCover === 'custom' && !customImage)) return () => { active = false }
+    const timer = setTimeout(async () => {
+      try {
+        const card = buildCardData(chosenDays, entries, repo, title)
+        const entry = { ...card.entry, image: effectiveCover === 'daily' ? null : effectiveCover === 'custom' ? customImage : card.entry.image }
+        const offscreen = document.createElement('canvas')
+        const result = await drawShareCard(offscreen, card.day, entry, { historyDays: availableDays, accent })
+        if (!active || !canvasRef.current) return
+        canvasRef.current.width = offscreen.width
+        canvasRef.current.height = offscreen.height
+        canvasRef.current.getContext('2d').drawImage(offscreen, 0, 0)
+        setBackground(result); setReady(true)
+      } catch (cause) { if (active) setError(cause.message) }
+    }, 250)
+    return () => { active = false; clearTimeout(timer) }
+  }, [selectedDates, title, effectiveCover, customImage, accent, availableDays, entries, repo])
+
+  const updateSelection = dates => {
+    setSelectedDates(dates)
+    if (!titleEdited) setTitle(dates.length === 1 ? getTitle(availableDays.find(day => day.date === dates[0])) : dates.length ? `${dates.length} work days` : '')
+  }
+  const toggleDay = date => updateSelection(selectedDates.includes(date) ? selectedDates.filter(item => item !== date) : [...selectedDates, date])
+  const uploadCover = event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setPhotoError('Choose a JPG, PNG, or WebP image.'); return }
+    if (file.size > 2 * 1024 * 1024) { setPhotoError('Choose an image smaller than 2 MB.'); return }
+    const reader = new FileReader()
+    reader.onload = () => { setCustomImage(reader.result); setCoverMode('custom'); setPhotoError('') }
+    reader.onerror = () => setPhotoError('The image could not be read.')
+    reader.readAsDataURL(file)
+    event.target.value = ''
+  }
 
   const download = async () => {
-    try { await downloadShareCard(canvasRef.current, day.date) }
+    try { await downloadShareCard(canvasRef.current, chosenDays[0].date, title) }
     catch (cause) { setError(cause.message) }
   }
 
   return <div className="modal-backdrop share-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <div className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title">
-      <button ref={closeRef} className="dialog-close" aria-label="Close share card" onClick={onClose}><X size={20} /></button>
-      <div className="share-dialog-heading"><div><h2 id="share-title">Share this day</h2><p>Preview your card, then save the image.</p></div></div>
-      <div className="share-preview"><canvas ref={canvasRef} role="img" aria-label={`Share card for ${getTitle(day)}`} />{!ready && !error && <span className="share-loading"><SpinnerGap className="spinner" size={22} /> Generating card…</span>}</div>
-      {error && <p className="share-error" role="alert">{error}</p>}
-      <button className="primary-button share-download" disabled={!ready} onClick={download}><DownloadSimple size={18} weight="bold" /> Download PNG</button>
-      <p className="share-hint">1080 × 1350 PNG · {entry?.image ? 'Uses your photo.' : 'Background photo changes daily.'}</p>
+    <div className="share-dialog card-builder" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <button className="dialog-close" aria-label="Close share card" onClick={onClose}><X size={20} /></button>
+      <div className="builder-heading"><span>CARD STUDIO</span><h2 id="share-title">Make a share card</h2><p>Choose work days, name the card, and check the preview before saving.</p></div>
+      <div className="builder-layout">
+        <div className="builder-controls">
+          <section className="builder-section"><div className="builder-section-head"><label htmlFor="card-title">CARD TITLE</label><span>{title.length}/64</span></div><input ref={titleRef} id="card-title" className="builder-title-input" maxLength="64" value={title} onChange={event => { setTitle(event.target.value); setTitleEdited(true) }} placeholder="Name this work" />{!title.trim() && <p className="builder-help">Enter a title to create the card.</p>}</section>
+          <section className="builder-section"><div className="builder-section-head"><span>WORK DAYS</span><span>{chosenDays.length} selected · {selectedCount} commit{selectedCount === 1 ? '' : 's'}</span></div><div className="builder-quick"><button type="button" onClick={() => updateSelection(availableDays.slice(0, 7).map(day => day.date))}>Latest 7</button><button type="button" onClick={() => updateSelection(availableDays.map(day => day.date))}>All loaded</button><button type="button" onClick={() => updateSelection([])}>Clear</button></div><div className="builder-day-list" role="group" aria-label="Choose work days">{availableDays.map(day => <label key={day.date} className="builder-day"><input type="checkbox" checked={selectedDates.includes(day.date)} onChange={() => toggleDay(day.date)} /><span>{formattedDate(day.date, { month: 'short', day: 'numeric' })}</span><small>{day.commits.length} commit{day.commits.length === 1 ? '' : 's'}</small></label>)}</div>{!chosenDays.length && <p className="builder-help">Select at least one work day.</p>}</section>
+          <section className="builder-section"><div className="builder-section-head"><span>COVER PHOTO</span></div><div className="builder-choice"><label><input type="radio" name="card-cover" checked={coverMode === 'auto'} onChange={() => setCoverMode('auto')} /> Automatic{savedPhotoDay ? ' · saved work-day photo' : ' · daily image'}</label><label><input type="radio" name="card-cover" checked={coverMode === 'daily'} onChange={() => setCoverMode('daily')} /> Daily image</label><label className={!customImage ? 'muted-choice' : ''}><input type="radio" name="card-cover" checked={coverMode === 'custom'} onChange={() => setCoverMode('custom')} disabled={!customImage} /> Uploaded for this card</label></div><label className="builder-upload" htmlFor="card-photo">{customImage ? 'Change uploaded photo' : 'Upload a photo'}<input id="card-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadCover} /></label>{photoError && <p className="builder-help" role="alert">{photoError}</p>}</section>
+          <section className="builder-section"><div className="builder-section-head"><span>CHART ACCENT</span></div><div className="builder-colors">{CARD_ACCENTS.map(option => <button key={option.name} type="button" className={accent === option.color ? 'selected' : ''} aria-pressed={accent === option.color} onClick={() => setAccent(option.color)}><i style={{ background: option.color }} />{option.name}</button>)}</div></section>
+        </div>
+        <div className="builder-output"><div className="share-preview"><canvas ref={canvasRef} role="img" aria-label={`Share card preview: ${title || 'untitled'}`} />{!ready && !error && <span className="share-loading"><SpinnerGap className="spinner" size={22} /> {chosenDays.length && title.trim() ? 'Updating preview…' : 'Choose days and a title'}</span>}</div>{error && <p className="share-error" role="alert">{error}</p>}<button className="primary-button share-download" disabled={!ready} onClick={download}><DownloadSimple size={18} weight="bold" /> Download PNG</button><p className="share-hint">1080 × 1350 PNG · {background?.source === 'upload' ? 'Uses your selected photo.' : background?.photo ? <>Today’s image: <a href={background.photo.sourceUrl} target="_blank" rel="noreferrer">{background.photo.title}</a> · {background.photo.license} via Wikimedia Commons.</> : background ? 'Using a bundled photo. The daily image is unavailable.' : 'Preview updates as you edit.'}</p></div>
+      </div>
     </div>
   </div>
 }
@@ -263,7 +324,7 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [connectError, setConnectError] = useState('')
   const [showConnect, setShowConnect] = useState(false)
-  const [shareDay, setShareDay] = useState(null)
+  const [shareStartDates, setShareStartDates] = useState(null)
   const [filter, setFilter] = useState('all')
   const [authorFilter, setAuthorFilter] = useState('all')
   const [nextPage, setNextPage] = useState(null)
@@ -408,13 +469,13 @@ export default function App() {
         {isDemo && <div className="demo-banner"><Lightning size={18} weight="fill" /><span>Sample activity. Add a public repository to see your own work.</span></div>}
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button></div>}
         {notice && <div className="demo-banner" role="status"><span>{notice}</span><button onClick={() => setShowConnect(true)}>{token ? 'Change token' : 'Add token'} <ArrowRight size={15} /></button></div>}
-        <section className="welcome"><div><div className="welcome-date">WORK LOG <span>/</span> {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div><h1>{displayName}</h1><p>{subtitle}</p></div><button className="primary-button" onClick={() => setShowConnect(true)}><GithubLogo size={18} weight="fill" /> {isDemo ? 'Add a repository' : 'Switch repository'} <ArrowRight size={16} /></button></section>
+        <section className="welcome"><div><div className="welcome-date">WORK LOG <span>/</span> {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div><h1>{displayName}</h1><p>{subtitle}</p></div><div className="welcome-actions"><button className="primary-button" disabled={!filteredDays.length || loading} onClick={() => setShareStartDates([filteredDays[0].date])}><ShareNetwork size={17} /> Create card</button><button className="welcome-switch" onClick={() => setShowConnect(true)}><GithubLogo size={17} weight="fill" /> {isDemo ? 'Add a repository' : 'Switch repository'}</button></div></section>
         {!isDemo && <div className="contributor-filter"><label htmlFor="contributor-select">CONTRIBUTOR</label><select id="contributor-select" value={authorFilter} onChange={event => setAuthorFilter(event.target.value)}><option value="all">All contributors</option>{contributors.map(author => <option key={author} value={author}>{author}</option>)}</select><span>{authorFilter === 'all' ? 'Repository activity' : `Showing commits by ${authorFilter}`}</span></div>}
         <section className="stats-grid" aria-label="Progress summary"><div className="stat-card"><span>COMMITS</span><strong>{loading || error ? '—' : totalCommits.toLocaleString()}</strong><small>{isDemo ? 'Sample activity' : historyComplete ? 'Last 12 weeks' : 'Loaded so far'}</small></div><div className="stat-card"><span>LINES CHANGED</span><strong>{loading || error || totalLines === null ? '—' : totalLines.toLocaleString()}</strong><small>{measuredDays.length === filteredDays.length && filteredDays.length ? 'Additions + deletions' : measuredDays.length ? `${measuredDays.length} of ${filteredDays.length} days measured` : 'Load counts in the log'}</small></div><div className="stat-card"><span>ACTIVE DAYS</span><strong>{loading || error ? '—' : activeDays}</strong><small>{isDemo ? 'In this sample' : historyComplete ? 'In the last 12 weeks' : 'In loaded commits'}</small></div></section>
         <Heatmap days={filteredDays} complete={historyComplete} sample={isDemo} next={nextPage} onLoadMore={loadMore} loadingMore={loadingMore} loadError={historyError} />
         <section id="journal" className="journal"><div className="section-top journal-top"><div><h2>Work log</h2><p>Open a day to add context or make a card.</p></div><div className="filter-tabs" role="group" aria-label="Filter work log"><button className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>All days</button><button className={filter === 'notes' ? 'selected' : ''} onClick={() => setFilter('notes')}>With notes</button></div></div>
           {loading ? <div className="state-message"><SpinnerGap className="spinner" size={28} /><h3>Loading activity</h3><p>Fetching commits from GitHub.</p></div>
-          : visibleDays.length ? <div className="entry-list">{visibleDays.map(day => <EntryCard key={day.id} day={day} entry={entries[`${repo}:${day.date}`]} onSave={value => saveEntry(day.date, value)} onShare={() => setShareDay(day)} onLoadLines={() => loadDayLines(day)} lineLoading={!!lineLoading[day.date]} lineError={lineErrors[day.date]} isDemo={isDemo} />)}</div>
+          : visibleDays.length ? <div className="entry-list">{visibleDays.map(day => <EntryCard key={day.id} day={day} entry={entries[`${repo}:${day.date}`]} onSave={value => saveEntry(day.date, value)} onShare={() => setShareStartDates([day.date])} onLoadLines={() => loadDayLines(day)} lineLoading={!!lineLoading[day.date]} lineError={lineErrors[day.date]} isDemo={isDemo} />)}</div>
           : <div className="state-message"><ImageIcon size={30} /><h3>{error ? 'Activity could not load' : filter === 'notes' ? 'No work days with notes' : authorFilter !== 'all' ? 'No commits by this contributor' : 'No commits in this window'}</h3><p>{error ? 'Try again after the limit resets or connect with a valid token.' : filter === 'notes' ? 'Add a note or photo to a work day to see it here.' : authorFilter !== 'all' ? 'Choose another contributor or load more history.' : 'Try a repository with activity in the last 12 weeks.'}</p>{error ? <button className="small-primary" onClick={() => setShowConnect(true)}>{token ? 'Change token or retry' : 'Add token or retry'}</button> : filter === 'notes' ? <button className="small-primary" onClick={() => setFilter('all')}>See all activity</button> : authorFilter !== 'all' && <button className="small-primary" onClick={() => setAuthorFilter('all')}>All contributors</button>}</div>}
         </section>
         <footer>GitLarp · GitHub activity by work day. {isDemo && <button onClick={resetDemo}>Reset demo</button>}</footer>
@@ -440,6 +501,6 @@ export default function App() {
         {!isDemo && <button className="demo-link" onClick={resetDemo}>Return to sample workspace</button>}
       </div>
     </div>}
-    {shareDay && <ShareCardDialog day={shareDay} entry={entries[`${repo}:${shareDay.date}`]} onClose={() => setShareDay(null)} />}
+    {shareStartDates && <ShareCardDialog availableDays={filteredDays} entries={entries} repo={repo} initialDates={shareStartDates} onClose={() => setShareStartDates(null)} />}
   </div>
 }

@@ -265,7 +265,8 @@ export async function drawShareCard(canvas, day, entry, { historyDays = [day], a
   ctx.fillRect(76, 1288, 928, 2)
   ctx.fillStyle = '#526156'
   ctx.font = '700 20px "DM Sans Variable", sans-serif'
-  ctx.fillText(photo ? `PHOTO: WIKIMEDIA COMMONS · ${photo.license.toUpperCase()}` : 'GITHUB ACTIVITY / ONE WORK DAY', 76, 1305)
+  const dayCount = day.selectedDates?.length || 1
+  ctx.fillText(photo ? `PHOTO: WIKIMEDIA COMMONS · ${photo.license.toUpperCase()}` : `GITHUB ACTIVITY / ${dayCount === 1 ? 'ONE WORK DAY' : `${dayCount} WORK DAYS`}`, 76, 1305)
   ctx.textAlign = 'right'
   ctx.fillStyle = accent
   ctx.font = '800 22px "Manrope Variable", sans-serif'
