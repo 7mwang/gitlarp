@@ -2,6 +2,7 @@ import serverRoom from './assets/card-backgrounds/server-room.jpg'
 import circuitBoard from './assets/card-backgrounds/circuit-board.jpg'
 import radioTelescopes from './assets/card-backgrounds/radio-telescopes.jpg'
 import computerMemory from './assets/card-backgrounds/computer-memory.jpg'
+import { getDailyImage, markDailyImageUnavailable } from './dailyImage.js'
 
 const WIDTH = 1080
 const HEIGHT = 1350
@@ -94,19 +95,77 @@ function drawAvatar(ctx, image, name, x, y, size) {
   ctx.restore()
 }
 
-function label(ctx, text, x, y) {
-  ctx.fillStyle = '#a34b32'
+function label(ctx, text, x, y, accent) {
+  ctx.fillStyle = accent
   ctx.font = '800 20px "DM Sans Variable", sans-serif'
   ctx.fillText(text, x, y)
 }
 
-export async function drawShareCard(canvas, day, entry) {
+function drawActivityChart(ctx, day, historyDays, accent) {
+  const selected = new Set(day.selectedDates || [day.date])
+  const first = new Date(`${selected.size > 1 ? day.startDate : day.date}T12:00:00`)
+  if (selected.size === 1) first.setDate(first.getDate() - 6)
+  const end = new Date(`${day.date}T12:00:00`)
+  const counts = new Map(historyDays.map(item => [item.date, item.commits.length]))
+  const daily = []
+  for (const date = new Date(first); date <= end; date.setDate(date.getDate() + 1)) {
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    daily.push({ date: new Date(date), count: counts.get(key) || 0, selected: selected.has(key) })
+  }
+  const buckets = Math.min(daily.length, 28)
+  const series = Array.from({ length: buckets }, (_, index) => {
+    const slice = daily.slice(Math.floor(index * daily.length / buckets), Math.floor((index + 1) * daily.length / buckets))
+    return { date: slice[0].date, count: slice.reduce((sum, item) => sum + item.count, 0), selected: slice.some(item => item.selected) }
+  })
+  label(ctx, daily.length > 28 ? 'COMMITS OVER TIME' : 'COMMITS BY DAY', 76, 1014, accent)
+  ctx.textAlign = 'right'
+  ctx.fillStyle = '#657266'
+  ctx.font = '700 18px "DM Sans Variable", sans-serif'
+  ctx.fillText(selected.size > 1 ? `${selected.size} SELECTED DAYS IN COLOR` : 'SELECTED DAY IN COLOR', 1004, 1016)
+  ctx.textAlign = 'left'
+  const max = Math.max(1, ...series.map(item => item.count))
+  const slot = 928 / series.length
+  const width = Math.min(66, Math.max(5, slot * .58))
+  series.forEach((item, index) => {
+    const x = 76 + slot * index + (slot - width) / 2
+    const height = item.count ? Math.max(6, Math.round(item.count / max * 45)) : 3
+    ctx.fillStyle = item.selected ? accent : '#b5c3b4'
+    ctx.fillRect(x, 1104 - height, width, height)
+    if (series.length <= 10) {
+      ctx.textAlign = 'center'
+      ctx.fillStyle = item.selected ? '#28372d' : '#657266'
+      ctx.font = '700 17px "DM Sans Variable", sans-serif'
+      if (item.count) ctx.fillText(String(item.count), x + width / 2, 1040)
+      ctx.font = '700 16px "DM Sans Variable", sans-serif'
+      ctx.fillText(item.date.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(), x + width / 2, 1112)
+    }
+  })
+  if (series.length > 10) {
+    ctx.fillStyle = '#657266'
+    ctx.font = '700 17px "DM Sans Variable", sans-serif'
+    ctx.fillText(first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 76, 1112)
+    ctx.textAlign = 'right'
+    ctx.fillText(end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 1004, 1112)
+    ctx.textAlign = 'left'
+  }
+}
+
+export async function drawShareCard(canvas, day, entry, { historyDays = [day], accent = '#a34b32' } = {}) {
   await document.fonts.ready
   const contributors = [...new Map(day.commits.map(commit => [commit.author, { name: commit.author, avatar: commit.avatar }])).values()].slice(0, 4)
   const owner = day.repo.split('/')[0].trim()
   const ownerUrl = day.repo.includes(' / ') ? null : `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=128`
-  const [image, ownerImage, ...contributorImages] = await Promise.all([
-    loadImage(entry?.image || dailyBackground()),
+  const background = entry?.image
+    ? loadImage(entry.image).then(image => ({ image, photo: null }))
+    : getDailyImage().then(async photo => {
+      if (photo) {
+        try { return { image: await loadImage(photo.url), photo } }
+        catch { markDailyImageUnavailable() }
+      }
+      return { image: await loadImage(dailyBackground()), photo: null }
+    })
+  const [{ image, photo }, ownerImage, ...contributorImages] = await Promise.all([
+    background,
     ownerUrl ? loadImage(ownerUrl).catch(() => null) : Promise.resolve(null),
     ...contributors.map(person => person.avatar ? loadImage(person.avatar).catch(() => null) : Promise.resolve(null))
   ])
@@ -132,8 +191,12 @@ export async function drawShareCard(canvas, day, entry) {
   ctx.fillText('gitlarp.', 76, 58)
   ctx.textAlign = 'right'
   ctx.fillStyle = '#f4f3ea'
-  ctx.font = '700 24px "DM Sans Variable", sans-serif'
-  const dateLabel = new Date(`${day.date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase()
+  ctx.font = `${day.startDate && day.startDate !== day.date ? '700 21px' : '700 24px'} "DM Sans Variable", sans-serif`
+  const endLabel = new Date(`${day.date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase()
+  const startLabel = day.startDate && day.startDate !== day.date
+    ? new Date(`${day.startDate}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()
+    : null
+  const dateLabel = startLabel ? `${startLabel} – ${endLabel}` : endLabel
   ctx.fillText(dateLabel, WIDTH - 76, 71)
   ctx.textAlign = 'left'
 
@@ -151,16 +214,16 @@ export async function drawShareCard(canvas, day, entry) {
   const titleLines = wrapText(ctx, title, 924, 3)
   titleLines.forEach((line, index) => ctx.fillText(line, 72, 268 + index * 86))
 
-  label(ctx, 'CONTRIBUTORS', 76, 605)
-  contributors.forEach((person, index) => drawAvatar(ctx, contributorImages[index], person.name, 76 + index * 60, 642, 54))
+  label(ctx, 'CONTRIBUTORS', 76, 590, accent)
+  contributors.forEach((person, index) => drawAvatar(ctx, contributorImages[index], person.name, 76 + index * 60, 624, 54))
   ctx.fillStyle = '#344138'
   ctx.font = '700 26px "DM Sans Variable", sans-serif'
-  ctx.fillText(wrapText(ctx, contributors.map(person => person.name).join(', ') || 'Contributor', 650, 1)[0], 88 + contributors.length * 60, 655)
+  ctx.fillText(wrapText(ctx, contributors.map(person => person.name).join(', ') || 'Contributor', 650, 1)[0], 88 + contributors.length * 60, 637)
 
   ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 719, 928, 2)
-  ctx.fillRect(539, 744, 2, 351)
-  ctx.fillRect(76, 917, 928, 2)
+  ctx.fillRect(76, 696, 928, 2)
+  ctx.fillRect(539, 714, 2, 277)
+  ctx.fillRect(76, 852, 928, 2)
 
   const note = entry?.note?.trim()
   const changed = day.additions === null || day.deletions === null ? null : day.additions + day.deletions
@@ -172,48 +235,53 @@ export async function drawShareCard(canvas, day, entry) {
   ]
   stats.forEach((stat, index) => {
     const x = index % 2 ? 574 : 76
-    const y = index < 2 ? 747 : 944
-    label(ctx, stat.label, x, y)
-    ctx.fillStyle = index === 1 ? '#a34b32' : '#1e2b24'
-    let size = 82
+    const y = index < 2 ? 716 : 860
+    label(ctx, stat.label, x, y, accent)
+    ctx.fillStyle = index === 1 ? accent : '#1e2b24'
+    let size = 68
     ctx.font = `800 ${size}px "Manrope Variable", sans-serif`
     while (ctx.measureText(stat.value).width > 423 && size > 48) {
       size -= 2
       ctx.font = `800 ${size}px "Manrope Variable", sans-serif`
     }
-    ctx.fillText(stat.value, x - 4, y + 37)
+    ctx.fillText(stat.value, x - 4, y + 29)
     ctx.fillStyle = '#5a695e'
     ctx.font = '600 22px "DM Sans Variable", sans-serif'
-    ctx.fillText(stat.detail, x, y + 126)
+    ctx.fillText(stat.detail, x, y + 103)
   })
 
   ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 1118, 928, 2)
-  label(ctx, note ? 'YOUR NOTE' : 'COMMIT LOG', 76, 1148)
+  ctx.fillRect(76, 994, 928, 2)
+  drawActivityChart(ctx, day, historyDays, accent)
+  ctx.fillStyle = '#c9cec2'
+  ctx.fillRect(76, 1147, 928, 2)
+  label(ctx, note ? 'YOUR NOTE' : 'COMMIT LOG', 76, 1162, accent)
   ctx.fillStyle = '#344138'
   ctx.font = '500 28px "DM Sans Variable", sans-serif'
   const logText = note || day.commits.map(commit => commit.message).join('  ·  ')
-  wrapText(ctx, logText, 928, 2).forEach((line, index) => ctx.fillText(line, 76, 1183 + index * 38))
+  wrapText(ctx, logText, 928, 2).forEach((line, index) => ctx.fillText(line, 76, 1193 + index * 34))
 
   ctx.fillStyle = '#c9cec2'
   ctx.fillRect(76, 1288, 928, 2)
   ctx.fillStyle = '#526156'
   ctx.font = '700 20px "DM Sans Variable", sans-serif'
-  ctx.fillText('GITHUB ACTIVITY / ONE WORK DAY', 76, 1305)
+  ctx.fillText(photo ? `PHOTO: WIKIMEDIA COMMONS · ${photo.license.toUpperCase()}` : 'GITHUB ACTIVITY / ONE WORK DAY', 76, 1305)
   ctx.textAlign = 'right'
-  ctx.fillStyle = '#a34b32'
+  ctx.fillStyle = accent
   ctx.font = '800 22px "Manrope Variable", sans-serif'
   ctx.fillText('GITLARP', WIDTH - 76, 1302)
+  return { photo, source: entry?.image ? 'upload' : photo ? 'commons' : 'bundled' }
 }
 
-export function downloadShareCard(canvas, date) {
+export function downloadShareCard(canvas, date, title) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) { reject(new Error('The card could not be exported.')); return }
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `gitlarp-${date}.png`
+      const slug = title?.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
+      link.download = `gitlarp-${slug || date}.png`
       document.body.appendChild(link)
       link.click()
       link.remove()
