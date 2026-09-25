@@ -47,6 +47,8 @@ The card studio centralizes creation. Start from the dashboard or a work day, na
 
 The normal and GitHub Pages builds passed. Browser checks used sample data at desktop and 375px widths, covered a live Commons image, multi-day totals and chart, an uploaded-photo override, and PNG encoding. `node tests/cardData.test.js` passed both aggregation checks. The real GitHub API path was not exercised in these card-focused checks.
 
+The share image was later tuned for feed-size reading: larger title, repository and contributor identities, stronger primary stats, a pale chart band with taller bars, and a commit area with two distinct recent messages. The commit label states how many additional messages are omitted; a user's note still takes that area when present. Keep the chart's canvas text alignment from leaking into the log and footer, or left-edge text will clip. Maintain clear space between the commit heading, each message row, and the footer.
+
 ## Capabilities and Constraints
 
 - A repository may be entered as `owner/repo` or as a GitHub repository URL. Only public repositories are supported.

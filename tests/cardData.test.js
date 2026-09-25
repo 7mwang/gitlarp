@@ -18,6 +18,7 @@ test('combines selected days in date order and chooses the latest saved photo', 
   assert.equal(result.day.startDate, '2026-09-22')
   assert.equal(result.day.date, '2026-09-24')
   assert.equal(result.day.commits.length, 2)
+  assert.deepEqual(result.day.commits.map(commit => commit.message), ['Ship card', 'Start card'])
   assert.equal(result.day.additions, 25)
   assert.equal(result.day.deletions, 5)
   assert.equal(result.day.title, 'Card launch')

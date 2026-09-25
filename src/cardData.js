@@ -11,7 +11,7 @@ export function buildCardData(days, entries, repo, title) {
       selectedDates: ordered.map(day => day.date),
       repo,
       title: title.trim(),
-      commits: ordered.flatMap(day => day.commits),
+      commits: [...ordered].reverse().flatMap(day => day.commits),
       additions: complete('additions') ? ordered.reduce((sum, day) => sum + day.additions, 0) : null,
       deletions: complete('deletions') ? ordered.reduce((sum, day) => sum + day.deletions, 0) : null
     },

@@ -97,7 +97,7 @@ function drawAvatar(ctx, image, name, x, y, size) {
 
 function label(ctx, text, x, y, accent) {
   ctx.fillStyle = accent
-  ctx.font = '800 20px "DM Sans Variable", sans-serif'
+  ctx.font = '800 23px "DM Sans Variable", sans-serif'
   ctx.fillText(text, x, y)
 }
 
@@ -117,37 +117,39 @@ function drawActivityChart(ctx, day, historyDays, accent) {
     const slice = daily.slice(Math.floor(index * daily.length / buckets), Math.floor((index + 1) * daily.length / buckets))
     return { date: slice[0].date, count: slice.reduce((sum, item) => sum + item.count, 0), selected: slice.some(item => item.selected) }
   })
-  label(ctx, daily.length > 28 ? 'COMMITS OVER TIME' : 'COMMITS BY DAY', 76, 1014, accent)
+  label(ctx, daily.length > 28 ? 'COMMITS OVER TIME' : 'COMMITS BY DAY', 76, 1022, accent)
   ctx.textAlign = 'right'
-  ctx.fillStyle = '#657266'
-  ctx.font = '700 18px "DM Sans Variable", sans-serif'
-  ctx.fillText(selected.size > 1 ? `${selected.size} SELECTED DAYS IN COLOR` : 'SELECTED DAY IN COLOR', 1004, 1016)
+  ctx.fillStyle = '#526456'
+  ctx.font = '700 20px "DM Sans Variable", sans-serif'
+  ctx.fillText(selected.size > 1 ? `${selected.size} SELECTED DAYS IN COLOR` : 'SELECTED DAY IN COLOR', 1004, 1025)
   ctx.textAlign = 'left'
   const max = Math.max(1, ...series.map(item => item.count))
   const slot = 928 / series.length
-  const width = Math.min(66, Math.max(5, slot * .58))
+  const width = Math.min(82, Math.max(8, slot * .64))
+  ctx.fillStyle = '#b9c7b8'
+  ctx.fillRect(76, 1127, 928, 2)
   series.forEach((item, index) => {
     const x = 76 + slot * index + (slot - width) / 2
-    const height = item.count ? Math.max(6, Math.round(item.count / max * 45)) : 3
-    ctx.fillStyle = item.selected ? accent : '#b5c3b4'
-    ctx.fillRect(x, 1104 - height, width, height)
+    const height = item.count ? Math.max(10, Math.round(item.count / max * 66)) : 4
+    ctx.fillStyle = item.selected ? accent : '#8fa995'
+    ctx.fillRect(x, 1127 - height, width, height)
     if (series.length <= 10) {
       ctx.textAlign = 'center'
       ctx.fillStyle = item.selected ? '#28372d' : '#657266'
-      ctx.font = '700 17px "DM Sans Variable", sans-serif'
-      if (item.count) ctx.fillText(String(item.count), x + width / 2, 1040)
-      ctx.font = '700 16px "DM Sans Variable", sans-serif'
-      ctx.fillText(item.date.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(), x + width / 2, 1112)
+      ctx.font = '800 20px "DM Sans Variable", sans-serif'
+      if (item.count) ctx.fillText(String(item.count), x + width / 2, 1127 - height - 25)
+      ctx.font = '700 18px "DM Sans Variable", sans-serif'
+      ctx.fillText(item.date.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(), x + width / 2, 1135)
     }
   })
   if (series.length > 10) {
     ctx.fillStyle = '#657266'
-    ctx.font = '700 17px "DM Sans Variable", sans-serif'
-    ctx.fillText(first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 76, 1112)
+    ctx.font = '700 19px "DM Sans Variable", sans-serif'
+    ctx.fillText(first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 76, 1135)
     ctx.textAlign = 'right'
-    ctx.fillText(end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 1004, 1112)
-    ctx.textAlign = 'left'
+    ctx.fillText(end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(), 1004, 1135)
   }
+  ctx.textAlign = 'left'
 }
 
 export async function drawShareCard(canvas, day, entry, { historyDays = [day], accent = '#a34b32' } = {}) {
@@ -187,7 +189,7 @@ export async function drawShareCard(canvas, day, entry, { historyDays = [day], a
 
   ctx.textBaseline = 'top'
   ctx.fillStyle = '#ffffff'
-  ctx.font = '800 34px "Manrope Variable", sans-serif'
+  ctx.font = '800 38px "Manrope Variable", sans-serif'
   ctx.fillText('gitlarp.', 76, 58)
   ctx.textAlign = 'right'
   ctx.fillStyle = '#f4f3ea'
@@ -200,69 +202,86 @@ export async function drawShareCard(canvas, day, entry, { historyDays = [day], a
   ctx.fillText(dateLabel, WIDTH - 76, 71)
   ctx.textAlign = 'left'
 
-  drawAvatar(ctx, ownerImage, owner, 76, 143, 54)
-  ctx.font = '700 27px "DM Sans Variable", sans-serif'
+  drawAvatar(ctx, ownerImage, owner, 76, 140, 62)
+  ctx.font = '700 31px "DM Sans Variable", sans-serif'
   ctx.fillStyle = '#ffffff'
-  ctx.fillText(wrapText(ctx, day.repo, 730, 1)[0], 148, 154)
+  ctx.fillText(wrapText(ctx, day.repo, 730, 1)[0], 155, 154)
   ctx.fillStyle = '#f4a479'
   ctx.font = '800 20px "DM Sans Variable", sans-serif'
   ctx.fillText('WORK LOG', 76, 230)
 
   const title = day.title || day.commits[0]?.message || 'Untitled work day'
-  ctx.font = '800 76px "Manrope Variable", sans-serif'
+  ctx.font = '800 86px "Manrope Variable", sans-serif'
   ctx.fillStyle = '#ffffff'
   const titleLines = wrapText(ctx, title, 924, 3)
-  titleLines.forEach((line, index) => ctx.fillText(line, 72, 268 + index * 86))
+  titleLines.forEach((line, index) => ctx.fillText(line, 72, 266 + index * 93))
 
-  label(ctx, 'CONTRIBUTORS', 76, 590, accent)
-  contributors.forEach((person, index) => drawAvatar(ctx, contributorImages[index], person.name, 76 + index * 60, 624, 54))
+  label(ctx, 'CONTRIBUTORS', 76, 587, accent)
+  contributors.forEach((person, index) => drawAvatar(ctx, contributorImages[index], person.name, 76 + index * 69, 625, 62))
   ctx.fillStyle = '#344138'
-  ctx.font = '700 26px "DM Sans Variable", sans-serif'
-  ctx.fillText(wrapText(ctx, contributors.map(person => person.name).join(', ') || 'Contributor', 650, 1)[0], 88 + contributors.length * 60, 637)
+  ctx.font = '700 30px "DM Sans Variable", sans-serif'
+  ctx.fillText(wrapText(ctx, contributors.map(person => person.name).join(', ') || 'Contributor', 650, 1)[0], 91 + contributors.length * 69, 640)
 
   ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 696, 928, 2)
-  ctx.fillRect(539, 714, 2, 277)
-  ctx.fillRect(76, 852, 928, 2)
+  ctx.fillRect(76, 701, 928, 2)
+  ctx.fillRect(539, 714, 2, 282)
+  ctx.fillRect(76, 856, 928, 2)
 
   const note = entry?.note?.trim()
   const changed = day.additions === null || day.deletions === null ? null : day.additions + day.deletions
   const stats = [
-    { label: 'COMMITS', value: day.commits.length.toLocaleString(), detail: 'checked in' },
-    { label: 'LINES CHANGED', value: changed === null ? '—' : changed.toLocaleString(), detail: changed === null ? 'counts available in the log' : 'added + removed' },
-    { label: 'ADDITIONS', value: day.additions === null ? '—' : `+${day.additions.toLocaleString()}`, detail: 'lines added' },
-    { label: 'DELETIONS', value: day.deletions === null ? '—' : `−${day.deletions.toLocaleString()}`, detail: 'lines removed' }
+    { label: 'COMMITS', value: day.commits.length.toLocaleString(), detail: 'checked in', color: '#202b26' },
+    { label: 'LINES CHANGED', value: changed === null ? '—' : changed.toLocaleString(), detail: changed === null ? 'load counts in the log' : 'added + removed', color: accent },
+    { label: 'ADDITIONS', value: day.additions === null ? '—' : `+${day.additions.toLocaleString()}`, detail: 'lines added', color: '#365a42' },
+    { label: 'DELETIONS', value: day.deletions === null ? '—' : `−${day.deletions.toLocaleString()}`, detail: 'lines removed', color: '#202b26' }
   ]
   stats.forEach((stat, index) => {
     const x = index % 2 ? 574 : 76
-    const y = index < 2 ? 716 : 860
+    const y = index < 2 ? 716 : 870
     label(ctx, stat.label, x, y, accent)
-    ctx.fillStyle = index === 1 ? accent : '#1e2b24'
-    let size = 68
+    ctx.fillStyle = stat.color
+    let size = index < 2 ? 90 : 74
     ctx.font = `800 ${size}px "Manrope Variable", sans-serif`
-    while (ctx.measureText(stat.value).width > 423 && size > 48) {
+    while (ctx.measureText(stat.value).width > 423 && size > 50) {
       size -= 2
       ctx.font = `800 ${size}px "Manrope Variable", sans-serif`
     }
-    ctx.fillText(stat.value, x - 4, y + 29)
+    ctx.fillText(stat.value, x - 4, y + 31)
     ctx.fillStyle = '#5a695e'
-    ctx.font = '600 22px "DM Sans Variable", sans-serif'
-    ctx.fillText(stat.detail, x, y + 103)
+    ctx.font = '600 23px "DM Sans Variable", sans-serif'
+    ctx.fillText(stat.detail, x, y + 113)
   })
 
-  ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 994, 928, 2)
+  ctx.fillStyle = '#e8eee5'
+  ctx.fillRect(0, 1009, WIDTH, 153)
   drawActivityChart(ctx, day, historyDays, accent)
   ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 1147, 928, 2)
-  label(ctx, note ? 'YOUR NOTE' : 'COMMIT LOG', 76, 1162, accent)
+  ctx.fillRect(76, 1163, 928, 2)
+  label(ctx, note ? 'YOUR NOTE' : 'RECENT COMMITS', 76, 1177, accent)
   ctx.fillStyle = '#344138'
-  ctx.font = '500 28px "DM Sans Variable", sans-serif'
-  const logText = note || day.commits.map(commit => commit.message).join('  ·  ')
-  wrapText(ctx, logText, 928, 2).forEach((line, index) => ctx.fillText(line, 76, 1193 + index * 34))
+  ctx.font = '600 29px "DM Sans Variable", sans-serif'
+  if (note) {
+    wrapText(ctx, note, 928, 2).forEach((line, index) => ctx.fillText(line, 76, 1213 + index * 37))
+  } else {
+    const recent = day.commits.slice(0, 2)
+    recent.forEach((commit, index) => {
+      const y = 1214 + index * 38
+      ctx.fillStyle = accent
+      ctx.fillRect(76, y + 10, 7, 7)
+      ctx.fillStyle = '#344138'
+      ctx.fillText(wrapText(ctx, commit.message || 'Untitled commit', 902, 1)[0], 94, y)
+    })
+    if (day.commits.length > 2) {
+      ctx.textAlign = 'right'
+      ctx.fillStyle = '#657266'
+      ctx.font = '700 20px "DM Sans Variable", sans-serif'
+      ctx.fillText(`+${day.commits.length - 2} MORE`, 1004, 1180)
+      ctx.textAlign = 'left'
+    }
+  }
 
   ctx.fillStyle = '#c9cec2'
-  ctx.fillRect(76, 1288, 928, 2)
+  ctx.fillRect(76, 1294, 928, 2)
   ctx.fillStyle = '#526156'
   ctx.font = '700 20px "DM Sans Variable", sans-serif'
   const dayCount = day.selectedDates?.length || 1
